@@ -1,0 +1,8 @@
+[
+  {"id": "how", "question": "How does this work?", "answer": "Tell me the kind of work and area you want. I send you matching jobs, you apply with one tap, and I keep you posted on each application right here."},
+  {"id": "cost", "question": "Is it free?", "answer": "Yes. Job seekers never pay. Standard WhatsApp data charges from your network may apply."},
+  {"id": "alerts", "question": "How often are alerts?", "answer": "Only when a new job matches your keywords, and never more than a few per day. Reply STOP at any time to pause them, or change this in Settings."},
+  {"id": "cv", "question": "Do I need a CV?", "answer": "Not to apply here. Employers see your name and phone number and will ask for a CV if they need one."},
+  {"id": "status", "question": "Where is my application?", "answer": "Tap My applications in the menu. Each one shows its current stage and what happens next."},
+  {"id": "privacy", "question": "What do you store?", "answer": "Your name, phone number, job preferences and applications. We never share your number with anyone except employers you apply to. Message Contact us to delete your data."}
+]
