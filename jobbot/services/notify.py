@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..models import Application, Job, OutboundMessage, SupportTicket, User
+from ..models import Application, Job, OutboundMessage, Reminder, SupportTicket, User
 from ..whatsapp import messages as m
 from ..whatsapp.client import SendResult, Sender
 from . import applications as apps
@@ -98,3 +98,16 @@ class Notifier:
             [user.name or "there", f"T{ticket.id}", m.clip(ticket.reply, 900)],
         )
         return self.send(db, user, "ticket_reply_template", payload)
+
+    # ----- reminders --------------------------------------------------------
+
+    def reminder(self, db: Session, r: Reminder) -> SendResult:
+        user = r.user
+        if user.in_service_window():
+            payload = m.button_message(user.phone, r.message, [m.Button("menu:assistant", "Reply"),
+                                                               m.Button("menu:main", "Main menu")])
+            return self.send(db, user, "reminder_text", payload)
+        payload = m.template_message(user.phone, self.settings.wa_template_reminder,
+                                     self.settings.wa_template_language,
+                                     [user.name or "there", m.clip(r.message, 900)])
+        return self.send(db, user, "reminder_template", payload)

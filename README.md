@@ -1,20 +1,60 @@
 # chat-what
 
-A deterministic WhatsApp chatbot with its own backend. WhatsApp is the whole user interface:
-no website, no app, no language model. Every reply is a menu, a list or a button, driven by a
-finite state machine, so the bot never guesses and every path is testable.
+A personal assistant you text on WhatsApp, with its own backend. WhatsApp is the whole user
+interface: no website, no app. Two layers work together:
 
-It ships with four modules and a framework for adding more:
+* **An assistant** (Claude) that understands free language, remembers what you tell it, uses
+  tools to actually do things, asks before anything with consequences, and follows up later on
+  its own.
+* **Deterministic menus** underneath, driven by a finite state machine, for people who prefer
+  taps, for onboarding and consent, and as the fallback when the model is unavailable or no API
+  key is configured.
+
+It ships with these modules and a framework for adding more:
 
 | Module | What the user can do |
 | --- | --- |
+| Ask anything | Chat in plain language. The assistant searches jobs, explains them, proposes applying (Confirm/Cancel buttons), checks status, updates preferences, answers from the FAQ, opens tickets, searches the web, remembers facts, schedules follow-ups |
 | Jobs | Set job keywords and location, browse ranked matches, apply with one tap, see each application's stage, withdraw |
 | Help & FAQ | Pick a question from a list, get the answer. Content lives in a JSON file |
 | Contact us | Send a message to the team, which becomes a ticket. The team's reply is delivered back on WhatsApp |
 | Settings | Notifications on/off, job preferences, name |
 
-Outbound, without the user asking: job alerts for new matches, application status changes, and
-ticket replies. All of these respect WhatsApp's 24-hour rule (see below).
+Outbound, without the user asking: job alerts for new matches, application status changes,
+ticket replies, and reminders the assistant promised. All of these respect WhatsApp's 24-hour
+rule (see below).
+
+## The assistant
+
+Set `ANTHROPIC_API_KEY` and the "Ask anything" entry appears first in the menu. Any text the
+deterministic router does not claim (a shortcut word, STOP, an answer to an open question) goes
+to the model. Send MENU to get back to buttons at any time.
+
+How a turn works (`jobbot/assistant/`):
+
+1. The system prompt is the persona plus the user's profile and remembered facts. The persona
+   block is cached; the profile block changes per user.
+2. The last 20 transcript messages are sent as history, then the new message.
+3. The model runs with tools built per request (`tools.py`) through the SDK tool runner, so it
+   can search jobs, read details, list applications, update preferences, look up the FAQ, open a
+   ticket, store a memory, schedule a reminder, and search the web.
+4. **Side effects are proposals.** `apply_to_job` and `withdraw_application` do not act. They
+   record a `PendingAction` and the module renders the model's one-sentence explanation with
+   Confirm and Cancel buttons. The tap executes the action deterministically. A new proposal
+   cancels an older pending one; another phone number cannot confirm yours.
+5. Reminders are rows in the `reminders` table. `jobbot send-reminders` (cron) delivers the due
+   ones, as a free-form message inside the 24-hour window or the `reminder` template outside it.
+   A user who has opted out never receives them.
+6. Refusals fall back server-side to another model. API errors, rate limits and connection
+   failures produce a plain reply that points to the menu, never a silent drop.
+
+Settings: `ASSISTANT_MODEL` (default `claude-opus-5-5`), `ASSISTANT_EFFORT` (`low`, `medium`,
+`high`), `ASSISTANT_WEB_SEARCH`, `ASSISTANT_NAME`, `ASSISTANT_HISTORY_TURNS`. Replies are capped
+at about 2k tokens because WhatsApp messages are short; long replies are split.
+
+Without a key the simulator and the tests use `FakeAgent`, an offline stand-in that understands
+`apply <job id>`, `withdraw <application id>`, `remember ...`, `remind me ...` and `jobs`, so the
+confirmation and reminder flows are testable without spending tokens.
 
 ## How it works
 
@@ -53,6 +93,7 @@ Manager and get them approved before alerts work for quiet users:
 | `WA_TEMPLATE_JOB_ALERT` | name, job title, company, location, reference |
 | `WA_TEMPLATE_STATUS_UPDATE` | name, job title, company, status label |
 | `WA_TEMPLATE_TICKET_REPLY` | name, ticket reference, reply text |
+| `WA_TEMPLATE_REMINDER` | name, reminder text |
 
 Example body for `job_alert`: `Hi {{1}}, a new job matches your search: {{2}} at {{3}} ({{4}}).
 Reply JOBS to see it. Ref {{5}}.` Classify them as *utility*, keep them specific to what the user
@@ -68,14 +109,16 @@ pip install -e ".[dev]"
 cp .env.example .env            # fill in later; the simulator needs nothing
 jobbot seed                     # creates the SQLite db and inserts demo jobs
 jobbot chat                     # talk to the bot in your terminal
+jobbot chat --fake-assistant    # force the offline assistant stand-in even with a key set
 ```
 
 The simulator prints exactly what WhatsApp would show, including button and row ids. Type text
 to send a text message, or an id such as `menu:jobs`, `job:1` or `apply:1` to tap. This is how
-you develop and demo without a Meta account.
+you develop and demo without a Meta account. With `ANTHROPIC_API_KEY` set, free text goes to the
+real assistant.
 
 ```bash
-pytest -q                       # 45 tests: message limits, webhook, every conversation path, scoring, alerts, admin API
+pytest -q                       # tests: message limits, webhook, every conversation path, scoring, alerts, admin API
 uvicorn jobbot.main:app --reload
 ```
 
@@ -122,6 +165,7 @@ Job alerts run from cron (or any scheduler that can call HTTP):
 
 ```bash
 */30 * * * *  cd /srv/chat-what && jobbot send-alerts        # or: POST /admin/alerts/run
+*/5  * * * *  cd /srv/chat-what && jobbot send-reminders     # or: POST /admin/reminders/run
 ```
 
 Each run sends at most `ALERTS_PER_USER_PER_RUN` jobs per user, only jobs posted in the last
@@ -150,13 +194,14 @@ Nothing else changes. The FAQ module is 60 lines and is a good template.
 ```
 jobbot/
   config.py            settings from environment / .env
-  models.py            User, ConversationState, Job, Application, SupportTicket, AlertSent, logs
+  models.py            User, ConversationState, Job, Application, SupportTicket, ChatMessage, Memory, Reminder, PendingAction, AlertSent, logs
   db.py                engine, sessions
   main.py              FastAPI app
-  cli.py               init-db, seed, send-alerts, chat (terminal simulator)
+  cli.py               init-db, seed, send-alerts, send-reminders, chat (terminal simulator)
+  assistant/           agent.py (Claude tool-runner loop, FakeAgent), tools.py, memory.py
   whatsapp/            messages.py (payload builders), client.py (Meta Cloud API), webhook.py (parsing, signature)
-  bot/                 engine.py (core state machine), context.py, copy.py, modules/{jobs,faq,contact,settings}.py
-  services/            jobs.py (scoring), applications.py, alerts.py, notify.py (24h-window aware sending)
+  bot/                 engine.py (core state machine), context.py, copy.py, modules/{assistant,jobs,faq,contact,settings}.py
+  services/            jobs.py (scoring), applications.py, alerts.py, reminders.py, notify.py (24h-window aware sending)
   api/                 webhook.py, admin.py, deps.py
   data/faq.json        Help & FAQ content
 tests/                 pytest suite with an in-memory db and a recording sender

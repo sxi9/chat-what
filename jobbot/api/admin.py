@@ -12,6 +12,7 @@ from ..db import get_db
 from ..models import Application, ApplicationStatus, Job, SupportTicket, TicketStatus, User
 from ..services import applications as apps
 from ..services.alerts import run_alerts
+from ..services.reminders import run_reminders
 from ..services.notify import Notifier
 from ..config import Settings, get_settings
 from .deps import get_notifier, require_admin
@@ -203,3 +204,9 @@ def reply_ticket(ticket_id: int, body: TicketReply, db: Session = Depends(get_db
     db.flush()
     notifier.ticket_reply(db, t)
     return _ticket_out(t)
+
+
+@router.post("/reminders/run")
+def trigger_reminders(db: Session = Depends(get_db), notifier: Notifier = Depends(get_notifier)):
+    """Same as `jobbot send-reminders`, for schedulers that can only call HTTP."""
+    return run_reminders(db, notifier).__dict__

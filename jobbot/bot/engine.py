@@ -43,6 +43,7 @@ class Bot:
     notifier: Notifier
     settings: Settings
     modules: list[Module] = field(default_factory=list)
+    fallback: Module | None = None  # gets free text nobody else claimed (the assistant, when enabled)
 
     def __post_init__(self) -> None:
         self._by_command: dict[str, Module] = {}
@@ -124,6 +125,9 @@ class Bot:
         if hit is not None:
             mod, entry = hit
             mod.open(ctx, entry)
+            return
+        if self.fallback is not None:
+            self.fallback.text(ctx, text)
             return
         self.show_menu(ctx, copy.MENU_UNKNOWN)
 
@@ -228,12 +232,27 @@ class Bot:
                     kind="opt_out")
 
 
-def build_bot(notifier: Notifier, settings: Settings) -> Bot:
-    """The production module line-up. Add new modules here."""
+def build_bot(notifier: Notifier, settings: Settings, agent=None) -> Bot:
+    """The production module line-up. Add new modules here.
+
+    `agent` is the natural-language brain. None means: use Claude when the assistant is enabled,
+    otherwise run the deterministic menus only.
+    """
+    from .modules.assistant import AssistantModule
     from .modules.contact import ContactModule
     from .modules.faq import FaqModule
     from .modules.jobs import JobsModule
     from .modules.settings import SettingsModule
 
-    return Bot(notifier=notifier, settings=settings,
-               modules=[JobsModule(), FaqModule.from_file(settings.faq_file), ContactModule(), SettingsModule()])
+    faq = FaqModule.from_file(settings.faq_file)
+    modules: list[Module] = [JobsModule(), faq, ContactModule(), SettingsModule()]
+    if agent is None and settings.assistant_on:
+        from ..assistant.agent import ClaudeAgent
+        agent = ClaudeAgent(settings, faq.items)
+    bot = Bot(notifier=notifier, settings=settings, modules=modules)
+    if agent is not None:
+        assistant = AssistantModule(agent)
+        bot.register(assistant)
+        bot.modules.insert(0, bot.modules.pop())  # "Ask anything" first in the menu
+        bot.fallback = assistant
+    return bot

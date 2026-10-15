@@ -11,6 +11,7 @@ from ..services.notify import Notifier
 from ..whatsapp.client import MetaCloudClient, RecordingSender, Sender
 
 _sender_override: Sender | None = None
+_agent_override = None
 
 
 def set_sender(sender: Sender | None) -> None:
@@ -18,6 +19,13 @@ def set_sender(sender: Sender | None) -> None:
     global _sender_override
     _sender_override = sender
     get_notifier.cache_clear()
+    get_bot.cache_clear()
+
+
+def set_agent(agent) -> None:
+    """Tests inject a fake assistant brain here."""
+    global _agent_override
+    _agent_override = agent
     get_bot.cache_clear()
 
 
@@ -39,7 +47,7 @@ def get_notifier() -> Notifier:
 
 @lru_cache
 def get_bot() -> Bot:
-    return build_bot(get_notifier(), get_settings())
+    return build_bot(get_notifier(), get_settings(), agent=_agent_override)
 
 
 def require_admin(x_admin_key: str | None = Header(default=None),

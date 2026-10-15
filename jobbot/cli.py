@@ -12,6 +12,7 @@ from .config import get_settings
 from .db import init_db, session_scope
 from .models import Job, utcnow
 from .services.alerts import run_alerts
+from .services.reminders import run_reminders
 from .services.notify import Notifier
 from .whatsapp.client import RecordingSender
 from .whatsapp.webhook import Inbound
@@ -68,6 +69,15 @@ def cmd_send_alerts(args: argparse.Namespace) -> None:
     print(json.dumps(report.__dict__, indent=2))
 
 
+def cmd_send_reminders(args: argparse.Namespace) -> None:
+    init_db()
+    if args.dry_run:
+        set_sender(RecordingSender())
+    with session_scope() as db:
+        report = run_reminders(db, _notifier())
+    print(json.dumps(report.__dict__, indent=2))
+
+
 def _describe(payload: dict) -> str:
     t = payload["type"]
     if t == "text":
@@ -97,7 +107,15 @@ def cmd_chat(args: argparse.Namespace) -> None:
     init_db()
     sender = RecordingSender()
     settings = get_settings()
-    bot = build_bot(Notifier(sender=sender, settings=settings), settings)
+    agent = None
+    if args.fake_assistant or not settings.assistant_on:
+        from .assistant.agent import FakeAgent
+        from .bot.modules.faq import FaqModule
+        agent = FakeAgent(settings, FaqModule.from_file(settings.faq_file).items)
+        print("Assistant: FAKE (set ANTHROPIC_API_KEY for the real one)")
+    else:
+        print(f"Assistant: Claude ({settings.assistant_model})")
+    bot = build_bot(Notifier(sender=sender, settings=settings), settings, agent=agent)
     phone = args.phone
     n = 0
     print(f"Simulating {phone}. Type a message, or an id like menu:jobs / job:1 / apply:1. Ctrl-D to quit.\n")
@@ -129,7 +147,11 @@ def main(argv: list[str] | None = None) -> None:
     a.set_defaults(fn=cmd_send_alerts)
     c = sub.add_parser("chat", help="local terminal simulator, no WhatsApp needed")
     c.add_argument("--phone", default="15550001111")
+    c.add_argument("--fake-assistant", action="store_true", help="use the offline stand-in even if a key is set")
     c.set_defaults(fn=cmd_chat)
+    r = sub.add_parser("send-reminders", help="deliver due reminders the assistant scheduled (run from cron)")
+    r.add_argument("--dry-run", action="store_true")
+    r.set_defaults(fn=cmd_send_reminders)
     args = p.parse_args(argv)
     args.fn(args)
 

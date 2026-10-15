@@ -147,6 +147,66 @@ class SupportTicket(Base):
     user: Mapped[User] = relationship()
 
 
+class ChatMessage(Base):
+    """Transcript of the natural-language assistant, used as context for the next turn."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Memory(Base):
+    """Facts the assistant chose to remember about a user."""
+
+    __tablename__ = "memories"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_memory_user_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    key: Mapped[str] = mapped_column(String(64))
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class Reminder(Base):
+    """A message the assistant promised to send later. Delivered by `jobbot send-reminders`."""
+
+    __tablename__ = "reminders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    message: Mapped[str] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    user: Mapped[User] = relationship()
+
+
+class PendingActionStatus(str, enum.Enum):
+    pending = "pending"
+    confirmed = "confirmed"
+    cancelled = "cancelled"
+
+
+class PendingAction(Base):
+    """A side effect the assistant proposed and the user has not confirmed yet."""
+
+    __tablename__ = "pending_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))  # apply | withdraw
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    summary: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[PendingActionStatus] = mapped_column(Enum(PendingActionStatus), default=PendingActionStatus.pending)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ProcessedMessage(Base):
     """Inbound WhatsApp message ids we have already handled. Meta redelivers on timeouts."""
 
